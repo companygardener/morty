@@ -1,0 +1,15 @@
+default: &default
+  adapter: postgresql
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+  schema_search_path: morty,morty_archive,public
+  host: <%= ENV.fetch("PGHOST", "localhost") %>
+  username: <%= ENV.fetch("PGUSER", ENV["USER"]) %>
+  password: <%= ENV.fetch("PGPASSWORD", "") %>
+
+development:
+  <<: *default
+  database: morty_development
+
+test:
+  <<: *default
+  database: morty_test

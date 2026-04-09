@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      RUBY_VERSION: ruby-4.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - name: Lint code for consistent style
+        run: bin/rubocop -f github
+
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Rails 7.0
+          - { ruby: '3.2', rails: 'rails_7.0' }
+          - { ruby: '3.3', rails: 'rails_7.0' }
+          - { ruby: '3.4', rails: 'rails_7.0' }
+          - { ruby: '4.0', rails: 'rails_7.0' }
+
+          # Rails 7.1
+          - { ruby: '3.2', rails: 'rails_7.1' }
+          - { ruby: '3.3', rails: 'rails_7.1' }
+          - { ruby: '3.4', rails: 'rails_7.1' }
+          - { ruby: '4.0', rails: 'rails_7.1' }
+
+          # Rails 7.2
+          - { ruby: '3.2', rails: 'rails_7.2' }
+          - { ruby: '3.3', rails: 'rails_7.2' }
+          - { ruby: '3.4', rails: 'rails_7.2' }
+          - { ruby: '4.0', rails: 'rails_7.2' }
+
+          # Rails 8.0
+          - { ruby: '3.2', rails: 'rails_8.0' }
+          - { ruby: '3.3', rails: 'rails_8.0' }
+          - { ruby: '3.4', rails: 'rails_8.0' }
+          - { ruby: '4.0', rails: 'rails_8.0' }
+
+          # Rails 8.1
+          - { ruby: '3.2', rails: 'rails_8.1' }
+          - { ruby: '3.3', rails: 'rails_8.1' }
+          - { ruby: '3.4', rails: 'rails_8.1' }
+          - { ruby: '4.0', rails: 'rails_8.1' }
+
+    env:
+      BUNDLE_GEMFILE: gemfiles/${{ matrix.rails }}.gemfile
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Ruby ${{ matrix.ruby }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Create database
+        run: createdb morty_test -h localhost -U postgres
+
+      - name: Run tests
+        run: bundle exec rake
+        env:
+          CI: true
+          CUCUMBER_PROFILE: ci
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-ruby${{ matrix.ruby }}-${{ matrix.rails }}
+          path: |
+            tmp/rspec.xml
+            tmp/cucumber.xml/

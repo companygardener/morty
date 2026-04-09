@@ -1,0 +1,2 @@
+default: --publish-quiet
+ci: --publish-quiet --format progress --format junit --out tmp/cucumber.xml
