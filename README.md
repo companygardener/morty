@@ -4,8 +4,8 @@ Morty is an accountant.
 
 **Depends on:**
 
-* Rails 8.1.2
-* Ruby 4.0.1
+* Rails 7.0.0
+* Ruby 3.2
 * PostgreSQL 17
 
 Source code
@@ -22,20 +22,15 @@ And then execute:
 
     $ bundle install
 
-Or install it yourself as:
+Run migrations (Morty is a Rails engine that includes its own migrations):
 
-    $ gem install morty
-
-Install migrations (Morty is a Rails engine):
-
-    $ rake morty:install:migrations
     $ rake db:migrate
 
 ## Testing
 
 Morty uses rspec and cucumber. Install them:
 
-  $ bundle install
+    $ bundle install
 
 Run the test suite:
 
