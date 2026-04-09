@@ -4,9 +4,10 @@ Morty is an accountant.
 
 **Depends on:**
 
-* Rails 7.0.0
-* Ruby 3.2
-* PostgreSQL 17
+* Rails 7.0+ (tested on 7.0, 7.1, 7.2, 8.0, 8.1)
+* Ruby 3.2+ (tested on 3.2, 3.3, 3.4, 4.0)
+* LookupBy ([edge][lookup_by], for now)
+* PostgreSQL 9.5+ (tested on 16)
 
 Source code
 
@@ -22,7 +23,7 @@ And then execute:
 
     $ bundle install
 
-Run migrations (Morty is a Rails engine that includes its own migrations):
+Run migrations (Morty is an engine and includes its own migrations):
 
     $ rake db:migrate
 
@@ -53,4 +54,5 @@ The gem is available as open source under the terms of the [MIT License](https:/
 
 Copyright © 2025-2026 Erik Peterson. Licensed under the MIT License.
 
-[source]: https://github.com/companygardener/morty "Morty source"
+[source]:    https://github.com/companygardener/morty     "Morty source"
+[lookup_by]: https://github.com/companygardener/lookup_by "LookupBy source"
