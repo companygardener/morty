@@ -27,6 +27,23 @@ Run migrations (Morty is an engine and includes its own migrations):
 
     $ rake db:migrate
 
+The migration creates two PostgreSQL schemas:
+
+- **`morty`** ... ledgers, account_types, accounts, activity_types, activities, entries, and a set of accounting views (balances, details, drs/crs)
+- **`morty_archive`** ... mirrors the activities and entries tables for closed-period data, with foreign key constraints removed for fast bulk inserts
+
+Both schemas enforce write-only access at the database level. Triggers prevent updates and deletes on activities, entries, and entry_types unless explicitly overridden.
+
+## Features
+
+- **Double-entry bookkeeping** ... every activity creates balanced debit/credit entries
+- **Write-only ledger** ... activities and entries cannot be updated or deleted at the database level; corrections are made through cancellations and reversals
+- **Multiple ledgers** ... run different accounting strategies side by side (e.g. conservative vs aggressive interest accrual) against the same source
+- **Retroactive activities** ... backdate an activity with `effective_date:` and Morty automatically recalculates all affected entries from that date forward
+- **In-memory simulation** ... simulate days forward, running daily logic and scheduled activities, before deciding whether to persist
+- **Effective rates** ... attach rate schedules that change over time; `rate_for(date)` resolves the correct rate for any point in history
+- **Period archival** ... move closed-period data to `morty_archive` to keep the active schema lean
+
 ## Usage
 
 Morty uses double-entry bookkeeping. You define an `Accountant` subclass that
@@ -115,8 +132,17 @@ accountant = LoanAccountant.new
 accountant.source     = loan       # any object with an #id method
 accountant.start_date = loan.funded_on
 
+# Set interest rates (annual, keyed by effective date)
+accountant.rates = {
+  "2026-01-01" => 0.365,   # 36.5% APR
+  "2026-07-01" => 0.24,    # drops to 24% APR on July 1
+}
+
 # Record a single activity
 accountant.activity :issue, "2026-01-01", 5000
+
+# Pass an idempotent_uuid to safely retry from webhooks or queues
+accountant.activity :payment, "2026-02-01", 500, idempotent_uuid: "550e8400-..."
 
 # Set a schedule of future activities
 accountant.schedule = [
@@ -135,6 +161,37 @@ accountant.accounts  # => { cash: -4000, principal: 4123.45, interest: 0, ... }
 accountant.save
 ```
 
+### Simulation
+
+`simulate_to` is a shortcut for the more flexible `simulate` block. Inside
+a simulation block, you can interleave activities with time advancement
+using `finish`:
+
+```ruby
+accountant.simulate do
+  issue   "2026-01-01", 1000
+  payment "2026-01-02", 1000
+end
+
+# finish advances the simulation day-by-day (running daily logic each day)
+# without recording an activity:
+accountant.simulate do
+  issue  "2026-01-01", 1000
+  finish "2026-01-11"          # run daily interest through Jan 11
+end
+```
+
+The simulation runs entirely in memory. Nothing is persisted until you
+call `accountant.save`. This makes it cheap to explore scenarios:
+
+```ruby
+# What would balances look like if we waited until March?
+trial = accountant.adjusting_accountant
+trial.simulate_to("2026-03-01")
+trial.balances  # => { accruing: 4500.00 }
+# nothing saved, original accountant unchanged
+```
+
 ### Cancellations and Reversals
 
 ```ruby
@@ -146,11 +203,38 @@ accountant.cancel(incorrect)
 accountant.reverse(prior_activity)
 ```
 
+### Retroactive Activities
+
+Record an activity today that takes effect in the past. Morty replays history
+from the effective date forward and generates an adjustment entry to correct
+all downstream balances (e.g. accrued interest).
+
+```ruby
+# Issue was funded on Jan 1, but we're recording it on Jan 3
+accountant.simulate_to("2026-01-03")
+accountant.activity :issue, "2026-01-03", 1000, effective_date: "2026-01-01"
+
+# Morty automatically:
+# 1. Replays simulation from the effective date
+# 2. Recalculates daily interest from Jan 1 through Jan 3
+# 3. Creates an :adjustment activity with correcting entries
+accountant.activities.count_by_type
+# => { issue: 1, interest: 2, adjustment: 1 }
+```
+
+Cancelling a retroactive activity also triggers readjustment:
+
+```ruby
+# Cancel the payment that was effective Jan 1
+accountant.cancel(payment_activity)
+# Interest is recalculated as if the payment never happened
+```
+
 ### Debugging
 
 Every activity has a `debug` method that prints a colorized ledger view:
 
-```ruby
+```
 activity = accountant.activities.last
 activity.debug
 
@@ -158,7 +242,7 @@ activity.debug
 #
 # Default ledger entries
 #
-#              |        DR |       CR
+#             |        DR |       CR
 # ------------|-----------|----------
 #   principal |   5000.00 |
 #        cash |           |   5000.00
@@ -168,8 +252,8 @@ You can also inspect the activity list:
 
 ```ruby
 accountant.activities.each { |a| puts a.inspect }
-# #<Activity[new]  $ 5000.00 2026-01-01            issue>
-# #<Activity[new]  $    1.00 2026-01-02            interest>
+# <Activity[new]  $ 5000.00 2026-01-01            issue>
+# <Activity[new]  $    1.00 2026-01-02            interest>
 
 # Filter by type
 accountant.activities.with_type(:interest).count
@@ -177,7 +261,7 @@ accountant.activities.count_by_type  # => { issue: 1, interest: 31, payment: 2 }
 
 # Inspect an activity's entries
 activity.entries.each { |e| puts e.inspect }
-# #<Entry[new] $5000.00 default DR[principal] CR[cash]>
+# <Entry[new] $5000.00 default DR[principal] CR[cash]>
 
 # Each entry exposes its debit/credit accounts and ledger
 entry = activity.entries.first
@@ -186,6 +270,42 @@ entry.cr      # => :cash
 entry.amount  # => 5000.0
 entry.ledger  # => :default
 ```
+
+### Period Closing and Archival
+
+Morty provides three PostgreSQL functions for managing historical data.
+Call them directly via SQL.
+
+**Close a period** ... marks a ledger as closed through a given date. The
+ledger must balance (debits equal credits) through that date or the call
+raises an exception.
+
+```sql
+SELECT morty.close_period(1, '2025-12-31');
+```
+
+**Archive by source** ... moves all activities and entries for a source
+into `morty_archive`. The source must have no entries in any open period.
+
+```sql
+SELECT * FROM morty.archive_source(1234);
+-- => archived_activities | archived_entries
+--    47                  | 312
+```
+
+**Archive by date** ... moves all activities and entries on or before a
+date into `morty_archive`. All ledgers must be closed through that date
+first.
+
+```sql
+SELECT * FROM morty.archive_through('2025-12-31');
+-- => archived_activities | archived_entries
+--    10842               | 89431
+```
+
+Archived data is queryable through the same view structure in the
+`morty_archive` schema. The archive tables mirror the active schema but
+without foreign key constraints, so bulk inserts are fast.
 
 ## Testing
 
