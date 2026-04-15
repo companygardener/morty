@@ -1,5 +1,14 @@
 require "spec_helper"
 
+# Accountant that defines activities but no daily block. Exercises the
+# nil-daily_proc path through #cancel → #adjust → #simulate_to → #daily.
+# Uses seeded activity_type :late_fee + entry_type (cash, late_fee).
+class DailylessAccountant < Morty::Accountant
+  activity :late_fee do
+    entry :cash, :late_fee, amount
+  end
+end
+
 # Minimal accountant subclass for unit testing
 class TestAccountant < Morty::Accountant
   activity :issue do
@@ -231,6 +240,31 @@ RSpec.describe Morty::Accountant do
 
       expect(acc.activities.size).to eq 1
       expect(acc.accounts[:cash]).to eq "200.00".to_d
+    end
+  end
+
+  describe "#daily" do
+    it "is a no-op when no daily block is defined on the class" do
+      acc = DailylessAccountant.new
+      acc.source     = source
+      acc.start_date = Date.current
+
+      expect { acc.daily(Date.current) }.not_to raise_error
+    end
+  end
+
+  describe "#cancel without a daily block" do
+    it "does not blow up when the accountant has no daily defined" do
+      acc = DailylessAccountant.new
+      acc.source     = source
+      acc.start_date = Date.current
+
+      fee = acc.activity(:late_fee, Date.current, "500.00".to_d)
+
+      expect { acc.cancel(fee) }.not_to raise_error
+      expect(acc.accounts[:cash]).to     eq(0.to_d)
+      expect(acc.accounts[:late_fee]).to eq(0.to_d)
+      expect(acc.activities.size).to eq(2)
     end
   end
 end

@@ -209,10 +209,19 @@ module Morty
     end
 
     def daily(date = nil)
+      return unless daily_proc
+
       @date = date.to_date if date
 
       ctx = Context::Daily.new(self)
-      ctx.instance_exec(&daily_proc) if ctx.instance_exec(&daily_guard_proc)
+
+      # A missing guard means the daily block should always run. This keeps
+      # #cancel usable for accountants that only define activities — #cancel
+      # routes through #adjust → #simulate_to → #daily and used to blow up
+      # with LocalJumpError when daily_proc was nil.
+      should_run = daily_guard_proc ? ctx.instance_exec(&daily_guard_proc) : true
+
+      ctx.instance_exec(&daily_proc) if should_run
     end
 
     def daily_schedule
