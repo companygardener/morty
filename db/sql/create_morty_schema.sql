@@ -1,4 +1,4 @@
-CREATE SCHEMA morty;
+CREATE SCHEMA IF NOT EXIStS morty;
 
 SET search_path=morty;
 
@@ -186,7 +186,7 @@ SELECT * FROM (
 WHERE activity_amount <> entry_sum
 ;
 
-CREATE SCHEMA morty_archive;
+CREATE SCHEMA IF NOT EXISTS morty_archive;
 
 SET search_path=morty_archive;
 
